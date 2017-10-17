@@ -4,6 +4,16 @@
 // Source code may be used for personal or commercial projects.
 // Source code may NOT be redistributed or sold.
 // 
+// *** A NOTE ABOUT PIRACY ***
+// 
+// If you got this asset off of leak forums or any other horrible evil pirate site, please consider buying it from the Unity asset store at https ://www.assetstore.unity3d.com/en/#!/content/60955?aid=1011lGnL. This asset is only legally available from the Unity Asset Store.
+// 
+// I'm a single indie dev supporting my family by spending hundreds and thousands of hours on this and other assets. It's very offensive, rude and just plain evil to steal when I (and many others) put so much hard work into the software.
+// 
+// Thank you.
+//
+// *** END NOTE ABOUT PIRACY ***
+//
 
 Shader "WeatherMaker/WeatherMakerParticleShader"
 {
@@ -11,13 +21,14 @@ Shader "WeatherMaker/WeatherMakerParticleShader"
 	{
 		_MainTex ("Color (RGB) Alpha (A)", 2D) = "gray" {}
 		_TintColor ("Tint Color (RGB)", Color) = (1, 1, 1, 1)
-		_PointSpotLightMultiplier ("Point/Spot Light Multiplier", Range (0, 10)) = 2
+		_PointSpotLightMultiplier ("Point/Spot Light Multiplier", Range (0, 10)) = 1
 		_DirectionalLightMultiplier ("Directional Light Multiplier", Range (0, 10)) = 1
 		_InvFade ("Soft Particles Factor", Range(0.01, 3.0)) = 1.0
 		_AmbientLightMultiplier ("Ambient light multiplier", Range(0, 4)) = 1
 		_Intensity ("Increase the alpha value by this multiplier", Range(0, 10)) = 1
 		_SrcBlendMode ("SrcBlendMode (Source Blend Mode)", Int) = 5 // SrcAlpha
 		_DstBlendMode ("DstBlendMode (Destination Blend Mode)", Int) = 10 // OneMinusSrcAlpha
+		_ParticleDitherLevel("Dither Level", Range(0, 1)) = 0.002
     }
 
     SubShader
@@ -29,11 +40,8 @@ Shader "WeatherMaker/WeatherMakerParticleShader"
 		{
 			ZWrite Off
 			Cull Back
-            Lighting On     
-			AlphaTest Greater 0.01
-			ColorMask RGB
 			Blend [_SrcBlendMode] [_DstBlendMode]
-						 
+ 
             CGPROGRAM
 
 			#pragma target 3.0
@@ -43,10 +51,13 @@ Shader "WeatherMaker/WeatherMakerParticleShader"
 			#pragma glsl_no_auto_normalization
 			#pragma multi_compile_particles
 			#pragma multi_compile __ ORTHOGRAPHIC_MODE
-			#pragma multi_compile __ PER_PIXEL_LIGHTING
+			#pragma multi_compile __ WEATHER_MAKER_PER_PIXEL_LIGHTING
+			#pragma multi_compile __ UNITY_HDR_ON
 
             #include "UnityCG.cginc"
 			#include "WeatherMakerShader.cginc"
+
+			fixed _ParticleDitherLevel;
 
 			struct appdata_t
 			{
@@ -61,9 +72,9 @@ Shader "WeatherMaker/WeatherMakerParticleShader"
                 fixed4 color : COLOR0;
                 float4 pos : SV_POSITION;
 
-#if defined(PER_PIXEL_LIGHTING)
+#if defined(WEATHER_MAKER_PER_PIXEL_LIGHTING)
 
-				float3 viewPos : TEXCOORD1;
+				float3 worldPos : TEXCOORD1;
 
 #endif
 
@@ -78,18 +89,18 @@ Shader "WeatherMaker/WeatherMakerParticleShader"
             v2f vert(appdata_t v)
             {
                 v2f o;
-                o.pos = mul(UNITY_MATRIX_MVP, v.vertex);
+                o.pos = UnityObjectToClipPos(v.vertex);
                 o.uv_MainTex = TRANSFORM_TEX(v.texcoord, _MainTex);
 
+#if defined(WEATHER_MAKER_PER_PIXEL_LIGHTING)
 
-#if defined(PER_PIXEL_LIGHTING)
-
-				o.viewPos = mul(UNITY_MATRIX_MV, v.vertex);
+				o.worldPos = WorldSpaceVertexPos(v.vertex);
 				o.color = v.color * _TintColor;
 
 #else
 
-				o.color = CalculateVertexColor(mul(UNITY_MATRIX_MV, v.vertex).xyz, float3(0, 0, 0)) * v.color * _TintColor;
+				o.color.rgb = ((_WeatherMakerAmbientLight.rgb * _AmbientLightMultiplier) + CalculateVertexColorWorldSpace(WorldSpaceVertexPos(v.vertex), true)) * v.color.rgb * _TintColor.rgb;
+				o.color.a = v.color.a * _TintColor.a;
 
 #endif
 
@@ -108,29 +119,35 @@ Shader "WeatherMaker/WeatherMakerParticleShader"
             fixed4 frag (v2f i) : COLOR
 			{       
 
-#if defined(PER_PIXEL_LIGHTING)
+#if defined(WEATHER_MAKER_PER_PIXEL_LIGHTING)
 
-				fixed4 color = tex2D(_MainTex, i.uv_MainTex) * i.color * CalculateVertexColor(i.viewPos, float3(0, 0, 0));
+				fixed4 color = tex2Dlod(_MainTex, float4(i.uv_MainTex, 0.0, -999.0));
+				color.rgb = color.rgb * i.color.rgb * ((_WeatherMakerAmbientLight.rgb * _AmbientLightMultiplier) + CalculateVertexColorWorldSpace(i.worldPos, true));
+				color.a *= i.color.a;
 
 #else
 
-				fixed4 color = tex2D(_MainTex, i.uv_MainTex) * i.color;
+				fixed4 color = tex2Dlod(_MainTex, float4(i.uv_MainTex, 0.0, -999.0)) * i.color;
 
 #endif
 
-				color.a = saturate(color.a * _Intensity);
+				color.a = min(1.0, color.a * _Intensity);
 
 #if defined(SOFTPARTICLES_ON)
 
-				float sceneZ = LinearEyeDepth(UNITY_SAMPLE_DEPTH(tex2Dproj(_CameraDepthTexture, UNITY_PROJ_COORD(i.projPos))));
+				float sceneZ = LinearEyeDepth(WM_SAMPLE_DEPTH_PROJ(i.projPos));
 				float partZ = i.projPos.z;
 				float diff = (sceneZ - partZ);
 				color.a *= saturate(_InvFade * diff);
 
 				// dither
-				const fixed3 magic = fixed3(0.06711056, 0.00583715, 52.9829189);
-				fixed gradient = frac(magic.z * frac(dot(i.projPos.xy / float2(_ScreenParams.z - 1.0, _ScreenParams.w - 1.0), magic.xy))) * 0.002 * (1.0 / max(0.001, color.a));
-				color.rgb -= gradient.rrr;
+				ApplyDither(color.rgb, i.projPos.xy, _ParticleDitherLevel);
+
+#endif
+
+#if defined(UNITY_COLORSPACE_GAMMA)
+
+				color *= 1.8;
 
 #endif
 

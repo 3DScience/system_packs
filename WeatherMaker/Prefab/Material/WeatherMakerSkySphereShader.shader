@@ -4,6 +4,17 @@
 // Source code may be used for personal or commercial projects.
 // Source code may NOT be redistributed or sold.
 // 
+// *** A NOTE ABOUT PIRACY ***
+// 
+// If you got this asset off of leak forums or any other horrible evil pirate site, please consider buying it from the Unity asset store at https ://www.assetstore.unity3d.com/en/#!/content/60955?aid=1011lGnL. This asset is only legally available from the Unity Asset Store.
+// 
+// I'm a single indie dev supporting my family by spending hundreds and thousands of hours on this and other assets. It's very offensive, rude and just plain evil to steal when I (and many others) put so much hard work into the software.
+// 
+// Thank you.
+//
+// *** END NOTE ABOUT PIRACY ***
+//
+
 // Resources:
 // http://library.nd.edu/documents/arch-lib/Unity/SB/Assets/SampleScenes/Shaders/Skybox-Procedural.shader
 //
@@ -12,197 +23,170 @@ Shader "WeatherMaker/WeatherMakerSkySphereShader"
 {
 	Properties
 	{
-		_MainTex ("Day Texture", 2D) = "blue" {}
-		_DawnDuskTex ("Dawn/Dusk Texture", 2D) = "orange" {}
-		_NightTex ("Night Texture", 2D) = "black" {}
-		_DayMultiplier ("Day Multiplier", Range(0, 3)) = 1
-		_DawnDuskMultiplier ("Dawn/Dusk Multiplier", Range(0, 1)) = 0
-		_NightMultiplier ("Night Multiplier", Range(0, 3)) = 0
-		_NightVisibilityThreshold ("Night Visibility Threshold", Range(0, 1)) = 0
-		_SunNormal ("Sun Normal pointing to 0,0,0", Vector) = (0, 0, 0, 0)
-		_SunColor ("Sun Color", Color) = (1, 1, 1, 1)
-		_SunSize ("Sun Size", Range(0.01, 10)) = 0.02
-		_SkyTintColor ("Sky tint color, procedural only", Color) = (0.5, 0.5, 0.5, 1)
-		_SkyAtmosphereThickness ("Sky atmosphere thickness, procedural only", Range(0, 5)) = 1
-		_GroundTintColor("Ground tint color, procedural only", Color) = (0.4, 0.4, 0.4)
+		_MainTex("Day Texture", 2D) = "blue" {}
+		_DawnDuskTex("Dawn/Dusk Texture", 2D) = "orange" {}
+		_NightTex("Night Texture", 2D) = "black" {}
+		_DayMultiplier("Day Multiplier", Range(0, 3)) = 1
+		_DawnDuskMultiplier("Dawn/Dusk Multiplier", Range(0, 1)) = 0
+		_NightMultiplier("Night Multiplier", Range(0, 1)) = 0
+		_NightSkyMultiplier("Night Sky Multiplier", Range(0, 1)) = 0
+		_NightVisibilityThreshold("Night Visibility Threshold", Range(0, 1)) = 0
+		_NightIntensity("Night Intensity", Range(0, 32)) = 2
+		_NightTwinkleSpeed("Night Twinkle Speed", Range(0, 100)) = 16
+		_NightTwinkleVariance("Night Twinkle Variance", Range(0, 10)) = 1
+		_NightTwinkleMinimum("Night Twinkle Minimum Color", Range(0, 1)) = 0.02
+		_NightTwinkleRandomness("Night Twinkle Randomness", Range(0, 5)) = 0.15
 	}
 	SubShader
 	{
-		Tags{ "RenderType" = "Background" "IgnoreProjector" = "True" "Queue" = "Background" }
-		Cull Off Lighting Off ZWrite Off
+		Tags { "Queue" = "Geometry+497" "RenderType" = "Opaque" "IgnoreProjector" = "True" "PerformanceChecks" = "False" "PreviewType" = "Skybox" }
 
-		Pass
+		CGINCLUDE
+
+		#include "WeatherMakerSkyShader.cginc"
+
+		#pragma target 3.0
+		#pragma fragmentoption ARB_precision_hint_fastest
+		#pragma glsl_no_auto_normalization
+		#pragma multi_compile __ UNITY_HDR_ON
+		#pragma multi_compile ENABLE_TEXTURED_SKY ENABLE_PROCEDURAL_TEXTURED_SKY ENABLE_PROCEDURAL_SKY
+		#pragma multi_compile __ ENABLE_NIGHT_TWINKLE
+
+		v2fSky vert(appdata v)
 		{
-			CGPROGRAM
+			v2fSky o;
+			o.vertex = UnityObjectToClipPosFarPlane(v.vertex);
+			o.uv.xy = v.uv; // TRANSFORM_TEX not supported
+			o.ray = WorldSpaceVertexPos(v.vertex) - _WorldSpaceCameraPos;
+			procedural_sky_info i = CalculateScatteringCoefficients(_WeatherMakerSunDirectionUp, _WeatherMakerSunColor.rgb * _WeatherMakerSunVar1.y, 1.0, normalize(o.ray));
+			o.inScatter = i.inScatter;
+			o.outScatter = i.outScatter;
+			return o;
+		}
 
-			#pragma target 3.0
-			#pragma vertex vert
-			#pragma fragment frag
-			#pragma fragmentoption ARB_precision_hint_fastest
-			#pragma glsl_no_auto_normalization
-			#pragma multi_compile __ UNITY_COLORSPACE_GAMMA
-			#pragma multi_compile __ ENABLE_SUN_HIGH_QUALITY ENABLE_SUN_FAST
-			#pragma multi_compile __ ENABLE_PROCEDURAL_TEXTURED_SKY
-			#pragma multi_compile __ ENABLE_PROCEDURAL_SKY
-			
-			#include "WeatherMakerShader.cginc"
-
-			struct appdata
-			{
-				float4 vertex : POSITION;
-				float2 uv : TEXCOORD0;
-				float3 normal : NORMAL;
-			};
-
-			struct v2f
-			{
-				float4 vertex : SV_POSITION;
-				float2 uv : TEXCOORD0;
-
-#if defined(ENABLE_SUN_HIGH_QUALITY) || defined(ENABLE_SUN_FAST) || defined(ENABLE_PROCEDURAL_TEXTURED_SKY) || defined(ENABLE_PROCEDURAL_SKY)
-
-				float3 ray : NORMAL;
-
-#endif
-
-#if defined(ENABLE_PROCEDURAL_TEXTURED_SKY) || defined(ENABLE_PROCEDURAL_SKY)
-
-				fixed4 vertexColor : COLOR0;
-
-#endif
-
-#if defined(ENABLE_SUN_HIGH_QUALITY) || defined(ENABLE_SUN_FAST)
-
-				fixed4 sunColor : TEXCOORD1;
-
-#endif
-
-			};
-
-			sampler2D _DawnDuskTex;
-			float4 _DawnDuskTex_ST;
-			sampler2D _NightTex;
-			float4 _NightTex_ST;
-			fixed _DayMultiplier;
-			fixed _DawnDuskMultiplier;
-			fixed _NightMultiplier;
-			fixed _NightVisibilityThreshold;
-			float3 _SunNormal;
-			fixed3 _SunColor;
-			fixed _SunSize;
-			fixed3 _SkyTintColor;
-			float _SkyAtmosphereThickness;
-			fixed3 _GroundTintColor;
-
-			fixed4 GetSunColor(v2f i)
-			{
-
-#if defined(ENABLE_SUN_HIGH_QUALITY)
-
-				return GetSunColorHighQuality(_SunNormal, i.sunColor, _SunSize, i.ray);
-
-#elif defined(ENABLE_SUN_FAST)
-
-				return GetSunColorFast(_SunNormal, i.sunColor, _SunSize, i.ray);
-
-#else
-
-				return fixed4(0, 0, 0, 0);
-
-#endif
-
-			}
-			
-			v2f vert (appdata v)
-			{
-				v2f o;
-				o.vertex = mul(UNITY_MATRIX_MVP, v.vertex);
-				//o.vertex = mul(UNITY_MATRIX_MVP, float4(v.vertex.xyz, 0));
-				//o.vertex.z = o.vertex.w;
-				o.uv = v.uv; // TRANSFORM_TEX not supported
-
-#if defined(ENABLE_PROCEDURAL_TEXTURED_SKY) || defined(ENABLE_PROCEDURAL_SKY)
-
-				procedural_sky_vertex psv = CalculateSkyVertex(_SunNormal, _SunColor, _GroundTintColor, v.vertex.xyz, _SkyTintColor, _SkyAtmosphereThickness);
-				o.ray = psv.ray;
-				o.vertexColor = psv.vertexColor;
-
-#if defined(ENABLE_SUN_HIGH_QUALITY) || defined(ENABLE_SUN_FAST)
-
-				o.sunColor = psv.sunColor;
-
-#endif
-
-#elif defined(ENABLE_SUN_HIGH_QUALITY) || defined(ENABLE_SUN_FAST)
-
-				o.ray = v.normal;
-				o.sunColor = fixed4(_SunColor, GetSunLightSkyMultiplier(-_SunNormal, v.vertex.xyz));
-
-#endif
-
-				return o;
-			}
-			
-			fixed4 frag (v2f i) : SV_Target
-			{
-				fixed4 result;
-
-#if defined(ENABLE_SUN_HIGH_QUALITY) || defined(ENABLE_SUN_FAST)
-
-				fixed sunMultiplier = i.sunColor.w;
-
-#else
-
-				fixed sunMultiplier = 1;
-
-#endif
+		fixed4 fragBase(v2fSky i)
+		{
+			fixed4 result;
+			i.ray = normalize(i.ray);
+			procedural_sky_info p = CalculateScatteringColor(_WeatherMakerSunDirectionUp, _WeatherMakerSunColor.rgb, _WeatherMakerSunVar1.x, i.ray, i.inScatter, i.outScatter);
+			fixed sunMoon;
+			fixed4 skyColor = p.skyColor;
+			fixed3 nightColor = GetNightColor(i.ray, i.uv);
 
 #if defined(ENABLE_PROCEDURAL_TEXTURED_SKY)
 
-				fixed4 skyColor = i.vertexColor + GetSunColor(i);
-				skyColor.a = 1.0 - _NightMultiplier;
-				fixed4 dayColor = tex2D(_MainTex, i.uv) * _DayMultiplier;
-				dayColor.rgb *= sunMultiplier;
-				fixed4 dawnDuskColor = tex2D(_DawnDuskTex, i.uv);
-				fixed4 dawnDuskColor2 = dawnDuskColor * _DawnDuskMultiplier;
-				dawnDuskColor2.rgb *= sunMultiplier;
-				dayColor += dawnDuskColor2;
-				fixed4 nightColor = (tex2D(_NightTex, i.uv) * _NightMultiplier);
-				nightColor *= ceil(max(nightColor.r, max(nightColor.g, nightColor.b)) - _NightVisibilityThreshold);
+			fixed4 dayColor = tex2D(_MainTex, i.uv) * _DayMultiplier;
+			fixed4 dawnDuskColor = tex2D(_DawnDuskTex, i.uv);
+			fixed4 dawnDuskColor2 = dawnDuskColor * _DawnDuskMultiplier;
+			dayColor += dawnDuskColor2;
 
-				// hide night texture wherever dawn/dusk is opaque
-				nightColor.rgb *= (1.0 - dawnDuskColor.a);
+			// hide night texture wherever dawn/dusk is opaque, reduce if clouds
+			nightColor *= (1.0 - dawnDuskColor.a);
 
-				// blend texture on top of sky
-				result = ((dayColor * dayColor.a) + (skyColor * (1.0 - dayColor.a)));
+			// blend texture on top of sky
+			result = ((dayColor * dayColor.a) + (skyColor * (1.0 - dayColor.a)));
 
-				// blend previous result on top of night
-				result = ((result * result.a) + (nightColor * (1.0 - result.a)));
+			// blend previous result on top of night
+			result = ((result * result.a) + (fixed4(nightColor, 1.0) * (1.0 - result.a)));
 
 #elif defined(ENABLE_PROCEDURAL_SKY)
 
-				fixed4 nightColor = (tex2D(_NightTex, i.uv) * _NightMultiplier);
-				nightColor *= ceil(max(nightColor.r, max(nightColor.g, nightColor.b)) - _NightVisibilityThreshold);
-				result = (i.vertexColor * sunMultiplier) + nightColor + GetSunColor(i);
+			result = skyColor + fixed4(nightColor, 0.0);
 
 #else
 
-				fixed4 dayColor = tex2D(_MainTex, i.uv) * sunMultiplier * _DayMultiplier;
-				fixed4 dawnDuskColor = (tex2D(_DawnDuskTex, i.uv) * _DawnDuskMultiplier);
-				fixed4 nightColor = (tex2D(_NightTex, i.uv) * _NightMultiplier);
-				nightColor *= ceil(max(nightColor.r, max(nightColor.g, nightColor.b)) - _NightVisibilityThreshold);
-				result = (dayColor + dawnDuskColor + nightColor) + GetSunColor(i);
+			fixed4 dayColor = tex2D(_MainTex, i.uv) * _DayMultiplier;
+			fixed4 dawnDuskColor = (tex2D(_DawnDuskTex, i.uv) * _DawnDuskMultiplier);
+			result = (dayColor + dawnDuskColor + fixed4(nightColor, 0.0));
 
 #endif
 
-				const fixed3 magic = fixed3(0.06711056, 100.00583715, 52.9829189);
-				fixed gradient = frac(magic.z * frac(dot(i.uv * 100, magic.xy))) * 0.005;
-				result.rgb -= gradient.xxx;
+			ApplyDither(result.rgb, i.uv, _WeatherMakerSkyDitherLevel);
+			return result;
+		}
 
-				return result;
-			}
+		fixed4 frag(v2fSky i) : SV_Target
+		{
+			return fragBase(i);
+		}
+
+		ENDCG
+
+		Pass
+		{
+			Tags { "LightMode" = "Always" }
+			Cull Front Lighting Off ZWrite Off ZTest LEqual
+			Blend [_SrcBlendMode] [_DstBlendMode]
+
+			CGPROGRAM
+
+			#pragma vertex vert
+			#pragma fragment frag
 
 			ENDCG
 		}
 	}
+
+	/*
+	Subshader
+	{
+		Tags { "Queue" = "Geometry+497" "RenderType" = "Opaque"	"IgnoreProjector" = "True" }
+
+		// http://answers.unity3d.com/questions/973067/using-shadow-texture-to-recieve-shadows-on-grass.html
+		Pass
+        { 
+			Name "SkySphereCloudShadowCasterPass"
+			Tags { "LightMode" = "ShadowCaster" }
+			ZWrite On ZTest Less Cull Back Fog { Mode Off }
+			Offset 1, 1
+
+			CGPROGRAM
+
+			#pragma target 3.0
+			#pragma vertex shadowVert2
+			#pragma fragment shadowFrag2
+			#pragma fragmentoption ARB_precision_hint_fastest
+			#pragma multi_compile_shadowcaster
+			#pragma glsl_no_auto_normalization
+
+			struct v2fShadow2
+			{
+				V2F_SHADOW_CASTER;
+				float3 ray : NORMAL;
+			};
+ 
+			v2fShadow2 shadowVert2(appdata_full v)
+			{
+				v2fShadow2 o;
+				o.ray = WorldSpaceVertexPos(v.vertex) - _WorldSpaceCameraPos;
+				TRANSFER_SHADOW_CASTER(o); 
+				//TRANSFER_SHADOW_CASTER_NORMALOFFSET(o);
+				return o;
+			}
+ 
+			float4 shadowFrag2(v2fShadow2 i) : COLOR
+			{
+
+#if defined(ENABLE_CLOUDS) || defined(ENABLE_CLOUDS_MASK)
+
+				float3 worldPos;
+				fixed f = ComputeCloudFBM(normalize(i.ray), worldPos);
+				clip(f - _FogShadowThreshold);
+				SHADOW_CASTER_FRAGMENT(i);
+
+#else
+
+				clip(-1.0);
+				SHADOW_CASTER_FRAGMENT(i);
+
+#endif
+
+			}
+
+			ENDCG
+        }
+	}
+	*/
+
+	FallBack Off
 }

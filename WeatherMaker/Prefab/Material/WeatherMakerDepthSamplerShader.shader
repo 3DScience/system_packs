@@ -4,6 +4,16 @@
 // Source code may be used for personal or commercial projects.
 // Source code may NOT be redistributed or sold.
 // 
+// *** A NOTE ABOUT PIRACY ***
+// 
+// If you got this asset off of leak forums or any other horrible evil pirate site, please consider buying it from the Unity asset store at https ://www.assetstore.unity3d.com/en/#!/content/60955?aid=1011lGnL. This asset is only legally available from the Unity Asset Store.
+// 
+// I'm a single indie dev supporting my family by spending hundreds and thousands of hours on this and other assets. It's very offensive, rude and just plain evil to steal when I (and many others) put so much hard work into the software.
+// 
+// Thank you.
+//
+// *** END NOTE ABOUT PIRACY ***
+//
 
 Shader "WeatherMaker/WeatherMakerDepthSamplerShader"
 {
@@ -18,21 +28,12 @@ Shader "WeatherMaker/WeatherMakerDepthSamplerShader"
 		Pass
 		{
 			CGPROGRAM
+
+			#pragma target 3.0
 			#pragma vertex vert
 			#pragma fragment frag
-			#pragma multi_compile __ SAMPLE_DEPTH_NORMALS
 
-			#include "UnityCG.cginc"
-
-#if defined(SAMPLE_DEPTH_NORMALS)
-
-			sampler2D _CameraDepthNormalsTexture;
-
-#else
-
-			sampler2D _CameraDepthTexture;
-
-#endif
+			#include "WeatherMakerShader.cginc"
 
 			struct appdata
 			{
@@ -49,24 +50,14 @@ Shader "WeatherMaker/WeatherMakerDepthSamplerShader"
 			v2f vert (appdata v)
 			{
 				v2f o;
-				o.vertex = mul(UNITY_MATRIX_MVP, v.vertex);
-				o.uv = v.uv;
+				o.vertex = UnityObjectToClipPos(v.vertex);
+				o.uv = AdjustFullScreenUV(v.uv);
 				return o;
 			}
 
 			float4 frag(v2f i) : SV_TARGET
 			{
-
-#if defined(SAMPLE_DEPTH_NORMALS)
-
-				return tex2D(_CameraDepthNormalsTexture, i.uv);
-
-#else
-
-				return UNITY_SAMPLE_DEPTH(tex2D(_CameraDepthTexture, i.uv));
-
-#endif
-
+				return WM_SAMPLE_DEPTH(i.uv);
 			}
 
 			ENDCG

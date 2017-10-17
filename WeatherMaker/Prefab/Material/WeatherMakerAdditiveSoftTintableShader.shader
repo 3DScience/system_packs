@@ -4,6 +4,16 @@
 // Source code may be used for personal or commercial projects.
 // Source code may NOT be redistributed or sold.
 // 
+// *** A NOTE ABOUT PIRACY ***
+// 
+// If you got this asset off of leak forums or any other horrible evil pirate site, please consider buying it from the Unity asset store at https ://www.assetstore.unity3d.com/en/#!/content/60955?aid=1011lGnL. This asset is only legally available from the Unity Asset Store.
+// 
+// I'm a single indie dev supporting my family by spending hundreds and thousands of hours on this and other assets. It's very offensive, rude and just plain evil to steal when I (and many others) put so much hard work into the software.
+// 
+// Thank you.
+//
+// *** END NOTE ABOUT PIRACY ***
+//
 
 Shader "WeatherMaker/WeatherMakerAdditiveSoftTintable"
 {
@@ -26,25 +36,14 @@ Shader "WeatherMaker/WeatherMakerAdditiveSoftTintable"
 
 		CGINCLUDE
 
-		#include "UnityCG.cginc"
+		#include "WeatherMakerShader.cginc"
 
+		#pragma target 3.0
 		#pragma vertex vert
 		#pragma fragment frag
 		#pragma fragmentoption ARB_precision_hint_fastest
 		#pragma glsl_no_auto_normalization
 		#pragma multi_compile_particles
-
-		sampler2D _MainTex;
-		float4 _MainTex_ST;
-		fixed4 _TintColor;
-		fixed _Intensity;
-
-#if defined(SOFTPARTICLES_ON)
-
-		float _InvFade;
-		sampler2D _CameraDepthTexture;
-
-#endif
 
 		struct appdata_t
 		{
@@ -80,7 +79,7 @@ Shader "WeatherMaker/WeatherMakerAdditiveSoftTintable"
 			v2f vert(appdata_t v)
 			{
 				v2f o;
-				o.vertex = mul(UNITY_MATRIX_MVP, v.vertex);
+				o.vertex = UnityObjectToClipPos(v.vertex);
 
 #if defined(SOFTPARTICLES_ON)
 
@@ -102,7 +101,7 @@ Shader "WeatherMaker/WeatherMakerAdditiveSoftTintable"
 
 #if defined(SOFTPARTICLES_ON)
 
-				float sceneZ = LinearEyeDepth(SAMPLE_DEPTH_TEXTURE_PROJ(_CameraDepthTexture, UNITY_PROJ_COORD(i.projPos)));
+				float sceneZ = LinearEyeDepth(WM_SAMPLE_DEPTH_PROJ(i.projPos));
 				float partZ = i.projPos.z;
 				float fade = saturate(_InvFade * (sceneZ - partZ));
 				i.color.rgb = i.color.rgb * fade;

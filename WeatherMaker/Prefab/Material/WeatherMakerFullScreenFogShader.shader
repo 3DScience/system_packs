@@ -4,6 +4,16 @@
 // Source code may be used for personal or commercial projects.
 // Source code may NOT be redistributed or sold.
 // 
+// *** A NOTE ABOUT PIRACY ***
+// 
+// If you got this asset off of leak forums or any other horrible evil pirate site, please consider buying it from the Unity asset store at https ://www.assetstore.unity3d.com/en/#!/content/60955?aid=1011lGnL. This asset is only legally available from the Unity Asset Store.
+// 
+// I'm a single indie dev supporting my family by spending hundreds and thousands of hours on this and other assets. It's very offensive, rude and just plain evil to steal when I (and many others) put so much hard work into the software.
+// 
+// Thank you.
+//
+// *** END NOTE ABOUT PIRACY ***
+//
 
 Shader "WeatherMaker/WeatherMakerFullScreenFogShader"
 {
@@ -13,43 +23,44 @@ Shader "WeatherMaker/WeatherMakerFullScreenFogShader"
 		_FogNoise("Fog Noise", 2D) = "white" {}
 		_FogNoiseScale("Fog Noise Scale", Range(0.0, 1.0)) = 0.0005
 		_FogNoiseMultiplier("Fog Noise Multiplier", Range(0.01, 1.0)) = 0.15
-		_FogNoiseVelocity("Fog Noise Time Multiplier", Vector) = (0.01, 0.01, 0, 0)
-		_FogNoiseHeight("Fog Noise Height", 2D) = "white" {}
-		_FogNoiseHeightScale("Fog Noise Height Scale", Range(0.0, 1.0)) = 0.05
-		_FogNoiseHeightMultiplier("Fog Noise Height Multiplier", Range(0.0, 1)) = 0.1
-		_FogNoiseHeightVariance("Fog Noise Height Variance", Range(0.0, 100.0)) = 10.0
+		_FogNoiseVelocity("Fog Noise Velocity", Vector) = (0.01, 0.01, 0, 0)
 		_FogDensity("Fog Density", Range(0.0, 1.0)) = 0.05
 		_FogHeight("Fog Height", Float) = 0
 		_MaxFogFactor("Maximum Fog Facto", Range(0.01, 1)) = 1
 		_FarPlaneSunThreshold("Far Plane Sun Threshold", Range(0, 1)) = 0.75
-		_SunColor("Sun Color", Vector) = (1.0, 1.0, 1.0, 1.0)
-		_SunDirection("Sun Direction", Vector) = (0, 0, 0, 0)
-		_DitherLevel("Dither Level", Range(0, 1)) = 0.005
-		_LinearFogDistance("Linear Fog Distance", Float) = 1000
+		_FogDitherLevel("Fog Dither Level", Range(0, 1)) = 0.005
+		_PointSpotLightMultiplier("Point/Spot Light Multiplier", Range(0, 10)) = 1
+		_DirectionalLightMultiplier("Directional Light Multiplier", Range(0, 10)) = 1
+		_AmbientLightMultiplier("Ambient Light Multiplier", Range(0, 10)) = 2
 	}
 	Category
 	{
-		Cull Back ZWrite Off ZTest Always
-		Blend [_SrcBlendMode] [_DstBlendMode]
+		Tags{ "Queue" = "Geometry+504" "IgnoreProjector" = "True" "RenderType" = "Transparent" "LightMode" = "Always" }
+		Cull Back Lighting Off ZWrite Off ZTest Always Fog { Mode Off }
 
 		SubShader
 		{
 			Pass
 			{
+				Blend[_SrcBlendMode][_DstBlendMode]
+
 				CGPROGRAM
 
+				#include "WeatherMakerFogShader.cginc"
+
 				#pragma target 3.0
-				#pragma vertex fog_full_screen_vertex_shader
+				#pragma vertex full_screen_vertex_shader
 				#pragma fragment fog_box_full_screen_fragment_shader
 				#pragma fragmentoption ARB_precision_hint_fastest
 				#pragma glsl_no_auto_normalization
-				#pragma multi_compile __ ENABLE_SUN
-				#pragma multi_compile __ ENABLE_SCALING
 				#pragma multi_compile __ ENABLE_FOG_NOISE
-				#pragma multi_compile __ ENABLE_FOG_HEIGHT ENABLE_FOG_HEIGHT_WITH_NOISE
-				#pragma multi_compile __ FOG_NONE FOG_EXPONENTIAL FOG_LINEAR FOG_EXPONENTIAL_SQUARED FOG_CONSTANT
-
-				#include "WeatherMakerFogShader.cginc"
+				#pragma multi_compile __ ENABLE_FOG_HEIGHT
+				#pragma multi_compile __ WEATHER_MAKER_FOG_EXPONENTIAL WEATHER_MAKER_FOG_LINEAR WEATHER_MAKER_FOG_EXPONENTIAL_SQUARED WEATHER_MAKER_FOG_CONSTANT
+				#pragma multi_compile __ ENABLE_FOG_LIGHTS ENABLE_FOG_LIGHTS_WITH_SHADOWS
+				#pragma multi_compile __ ENABLE_FOG_SUN_SHAFTS
+				#pragma multi_compile __ UNITY_MULTI_PASS_STEREO
+				#pragma multi_compile __ SHADOWS_ONE_CASCADE
+				#pragma multi_compile __ WEATHER_MAKER_FOG_ENABLE_NULL_FOG_ZONES
 
 				ENDCG
 			}

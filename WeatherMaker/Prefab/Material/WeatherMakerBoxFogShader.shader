@@ -4,6 +4,16 @@
 // Source code may be used for personal or commercial projects.
 // Source code may NOT be redistributed or sold.
 // 
+// *** A NOTE ABOUT PIRACY ***
+// 
+// If you got this asset off of leak forums or any other horrible evil pirate site, please consider buying it from the Unity asset store at https ://www.assetstore.unity3d.com/en/#!/content/60955?aid=1011lGnL. This asset is only legally available from the Unity Asset Store.
+// 
+// I'm a single indie dev supporting my family by spending hundreds and thousands of hours on this and other assets. It's very offensive, rude and just plain evil to steal when I (and many others) put so much hard work into the software.
+// 
+// Thank you.
+//
+// *** END NOTE ABOUT PIRACY ***
+//
 
 Shader "WeatherMaker/WeatherMakerBoxFogShader"
 {
@@ -13,25 +23,22 @@ Shader "WeatherMaker/WeatherMakerBoxFogShader"
 		_FogNoise("Fog Noise", 2D) = "white" {}
 		_FogNoiseScale("Fog Noise Scale", Range(0.0, 1.0)) = 0.0005
 		_FogNoiseMultiplier("Fog Noise Multiplier", Range(0.01, 1.0)) = 0.15
-		_FogNoiseVelocity("Fog Noise Time Multiplier", Vector) = (0.01, 0.01, 0, 0)
-		_FogNoiseHeight("Fog Noise Distortion", 2D) = "white" {}
-		_FogNoiseHeightScale("Fog Noise Distortion Scale", Range(0.0, 1.0)) = 0.05
-		_FogNoiseHeightMultiplier("Fog Noise Distortion Multiplier", Range(0.0, 1)) = 0.1
-		_FogNoiseHeightVariance("Fog Noise Distortion Variance", Range(0.0, 100.0)) = 10.0
+		_FogNoiseVelocity("Fog Noise Velocity", Vector) = (0.01, 0.01, 0, 0)
 		_FogDensity("Fog Density", Range(0.0, 1.0)) = 0.05
 		_FogBoxMin("Fog Box Min", Vector) = (0, 0, 0, 0)
 		_FogBoxMax("Fog Box Max", Vector) = (10, 10, 10, 0)
 		_FogPercentage("Percentage of Box to Fill", Range(0.0, 1.0)) = 0.9
 		_MaxFogFactor("Maximum Fog Factor", Range(0.01, 1)) = 1
-		_SunColor("Sun Color", Vector) = (1.0, 1.0, 1.0, 1.0)
-		_SunDirection("Sun Direction", Vector) = (0, 0, 0, 0)
-		_DitherLevel("Dither Level", Range(0, 1)) = 0.005
+		_PointSpotLightMultiplier("Point/Spot Light Multiplier", Range(0, 10)) = 1
+		_DirectionalLightMultiplier("Directional Light Multiplier", Range(0, 10)) = 1
+		_AmbientLightMultiplier("Ambient Light Multiplier", Range(0, 10)) = 2
 	}
 	Category
 	{
-		Tags{ "Queue" = "Transparent+98" "IgnoreProjector" = "True" "RenderType" = "Transparent" "LightMode" = "Always" }
+		Tags{ "Queue" = "Geometry+504" "IgnoreProjector" = "True" "RenderType" = "Transparent" "LightMode" = "Always" }
 		Cull Front Lighting Off ZWrite Off ZTest Always Fog { Mode Off }
-		Blend SrcAlpha OneMinusSrcAlpha
+		ColorMask RGBA
+		Blend One OneMinusSrcAlpha
 
 		SubShader
 		{
@@ -45,8 +52,9 @@ Shader "WeatherMaker/WeatherMakerBoxFogShader"
 				#pragma fragmentoption ARB_precision_hint_fastest
 				#pragma glsl_no_auto_normalization
 				#pragma multi_compile __ ENABLE_FOG_NOISE
-				#pragma multi_compile __ ENABLE_FOG_HEIGHT_WITH_NOISE
-				#pragma multi_compile __ FOG_NONE FOG_EXPONENTIAL FOG_LINEAR FOG_EXPONENTIAL_SQUARED FOG_CONSTANT
+				#pragma multi_compile __ WEATHER_MAKER_FOG_EXPONENTIAL WEATHER_MAKER_FOG_LINEAR WEATHER_MAKER_FOG_EXPONENTIAL_SQUARED WEATHER_MAKER_FOG_CONSTANT
+				#pragma multi_compile __ ENABLE_FOG_LIGHTS ENABLE_FOG_LIGHTS_WITH_SHADOWS
+				#pragma multi_compile __ SHADOWS_ONE_CASCADE
 
 				#include "WeatherMakerFogShader.cginc"
 

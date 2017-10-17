@@ -4,6 +4,16 @@
 // Source code may be used for personal or commercial projects.
 // Source code may NOT be redistributed or sold.
 // 
+// *** A NOTE ABOUT PIRACY ***
+// 
+// If you got this asset off of leak forums or any other horrible evil pirate site, please consider buying it from the Unity asset store at https ://www.assetstore.unity3d.com/en/#!/content/60955?aid=1011lGnL. This asset is only legally available from the Unity Asset Store.
+// 
+// I'm a single indie dev supporting my family by spending hundreds and thousands of hours on this and other assets. It's very offensive, rude and just plain evil to steal when I (and many others) put so much hard work into the software.
+// 
+// Thank you.
+//
+// *** END NOTE ABOUT PIRACY ***
+//
 
 // http://rastergrid.com/blog/2010/09/efficient-gaussian-blur-with-linear-sampling/
 // _MainTex must be bilinear
@@ -16,13 +26,14 @@ Shader "WeatherMaker/WeatherMakerBlurShader"
 	}
 	SubShader
 	{
-		Cull Back ZWrite Off ZTest Always
-		Blend SrcAlpha OneMinusSrcAlpha
+		Cull Back ZWrite Off ZTest [_ZTest]
+		Blend [_SrcBlendMode][_DstBlendMode]
 
 		CGINCLUDE
 
+		#pragma target 3.0
 		#pragma fragmentoption ARB_precision_hint_fastest
-		#pragma multi_compile __ BLUR7 DITHER
+		#pragma multi_compile __ BLUR7
 
 		#include "WeatherMakerShader.cginc"
 
@@ -36,27 +47,40 @@ Shader "WeatherMaker/WeatherMakerBlurShader"
 		{
 			float4 vertex : SV_POSITION;
 			float2 uv : TEXCOORD0;
-		};
 
-#if defined(DITHER)
+#if defined(BLUR7)
 
-		float _DitherLevel;
-		sampler2D _DitherTex;
+			float2 offsets : TEXCOORD1;
+
+#else
+
+			float4 offsets : TEXCOORD1;
 
 #endif
+
+		};
 
 		v2f vert (appdata v)
 		{
 			v2f o;
-			o.vertex = mul(UNITY_MATRIX_MVP, v.vertex);
-			o.uv = v.uv;
+			o.vertex = UnityObjectToClipPosFarPlane(v.vertex);
+			o.uv = AdjustFullScreenUV(v.uv);
 
-#if UNITY_UV_STARTS_AT_TOP
+#if defined(BLUR7)
 
-			if (_MainTex_TexelSize.y < 0)
-			{
-				o.uv.y = 1 - o.uv.y;
-			}
+			// take top left 3 and bottom right 3 plus center pixel average
+			o.offsets = float2(_MainTex_TexelSize.x * 0.333333, _MainTex_TexelSize.y * 0.333333);
+
+#else
+
+			// (0.4,-1.2) , (-1.2,-0.4) , (1.2,0.4) and (-0.4,1.2).
+			o.offsets = float4
+			(
+				_MainTex_TexelSize.x * 0.4,
+				_MainTex_TexelSize.x * 1.2,
+				_MainTex_TexelSize.y * 0.4,
+				_MainTex_TexelSize.y * 1.2
+			);
 
 #endif
 
@@ -75,30 +99,23 @@ Shader "WeatherMaker/WeatherMakerBlurShader"
 
 			fixed4 frag(v2f i) : SV_Target
 			{
-				fixed4 col = tex2D(_MainTex, i.uv);
+				fixed4 col = tex2Dlod(_MainTex, float4(i.uv, 0.0, 0.0));
 
 #if defined(BLUR7)
 
-				// 7 tap approximation
-				float offsetX = _MainTex_TexelSize.x * 0.333333;
-				float offsetY = _MainTex_TexelSize.y * 0.333333;
-				col += tex2D(_MainTex, float2(i.uv.x - offsetX, i.uv.y - offsetY));
-				col += tex2D(_MainTex, float2(i.uv.x + offsetX, i.uv.y + offsetY));
-				col *= 0.333333;
+				// 7 tap approximation with 2 texture lookups
+				col += tex2Dlod(_MainTex, (float4(i.uv.x - i.offsets.x, i.uv.y - i.offsets.y, 0.0, 0.0)));
+				col += tex2Dlod(_MainTex, (float4(i.uv.x + i.offsets.x, i.uv.y + i.offsets.y, 0.0, 0.0)));
+				col *= 0.333333; // 3 total colors to average
 
 #else
 
-				// 17 tap approximation
-				// (0.4,-1.2) , (-1.2,-0.4) , (1.2,0.4) and (-0.4,1.2).
-				float offsetXSmall = _MainTex_TexelSize.x * 0.4;
-				float offsetXLarge = _MainTex_TexelSize.x * 1.2;
-				float offsetYSmall = _MainTex_TexelSize.y * 0.4;
-				float offsetYLarge = _MainTex_TexelSize.y * 1.2;
-				col += tex2D(_MainTex, float2(i.uv.x + offsetXSmall, i.uv.y - offsetYLarge));
-				col += tex2D(_MainTex, float2(i.uv.x - offsetXLarge, i.uv.y - offsetYSmall));
-				col += tex2D(_MainTex, float2(i.uv.x + offsetXLarge, i.uv.y + offsetYSmall));
-				col += tex2D(_MainTex, float2(i.uv.x - offsetXSmall, i.uv.y + offsetYLarge));
-				col *= 0.2;
+				// 17 tap approximation with 4 texture lookups
+				col += tex2Dlod(_MainTex, (float4(i.uv.x + i.offsets.x, i.uv.y - i.offsets.w, 0.0, 0.0)));
+				col += tex2Dlod(_MainTex, (float4(i.uv.x - i.offsets.y, i.uv.y - i.offsets.z, 0.0, 0.0)));
+				col += tex2Dlod(_MainTex, (float4(i.uv.x + i.offsets.y, i.uv.y + i.offsets.z, 0.0, 0.0)));
+				col += tex2Dlod(_MainTex, (float4(i.uv.x - i.offsets.x, i.uv.y + i.offsets.w, 0.0, 0.0)));
+				col *= 0.2; // 5 total colors to average
 
 #endif
 

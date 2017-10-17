@@ -1,26 +1,38 @@
-//
+// Upgrade NOTE: replaced 'unity_World2Shadow' with 'unity_WorldToShadow'
+// Upgrade NOTE: excluded shader from DX11 because it uses wrong array syntax (type[size] name)
+#pragma exclude_renderers d3d11
+
 // Weather Maker for Unity
 // (c) 2016 Digital Ruby, LLC
 // Source code may be used for personal or commercial projects.
 // Source code may NOT be redistributed or sold.
 // 
+// *** A NOTE ABOUT PIRACY ***
+// 
+// If you got this asset off of leak forums or any other horrible evil pirate site, please consider buying it from the Unity asset store at https ://www.assetstore.unity3d.com/en/#!/content/60955?aid=1011lGnL. This asset is only legally available from the Unity Asset Store.
+// 
+// I'm a single indie dev supporting my family by spending hundreds and thousands of hours on this and other assets. It's very offensive, rude and just plain evil to steal when I (and many others) put so much hard work into the software.
+// 
+// Thank you.
+//
+// *** END NOTE ABOUT PIRACY ***
+//
+
+#ifndef __WEATHER_MAKER_SHADER__
+#define __WEATHER_MAKER_SHADER__
 
 #include "UnityCG.cginc"
 #include "Lighting.cginc"
 #include "AutoLight.cginc"
 #include "UnityDeferredLibrary.cginc"
+#include "HLSLSupport.cginc"
 
-// constants
-#define MIE_G (-0.990)
-#define MIE_G2 0.9801
-#define SKY_GROUND_THRESHOLD 0.02
-
-#ifndef SKYBOX_COLOR_IN_TARGET_COLOR_SPACE
-#if defined(SHADER_API_MOBILE)
-#define SKYBOX_COLOR_IN_TARGET_COLOR_SPACE 1
+#if defined(SHADER_API_D3D9)
+#define MAX_LIGHT_COUNT 4
+#define MAX_MOON_COUNT 2
 #else
-#define SKYBOX_COLOR_IN_TARGET_COLOR_SPACE 0
-#endif
+#define MAX_LIGHT_COUNT 16
+#define MAX_MOON_COUNT 8
 #endif
 
 #if defined(UNITY_COLORSPACE_GAMMA)
@@ -30,18 +42,14 @@
 #define LINEAR_2_OUTPUT(color) sqrt(color)
 #else
 #define GAMMA 2.2
-// HACK: to get gfx-tests in Gamma mode to agree until UNITY_ACTIVE_COLORSPACE_IS_GAMMA is working properly
 #define COLOR_2_GAMMA(color) ((unity_ColorSpaceDouble.r>2.0) ? pow(color,1.0/GAMMA) : color)
 #define COLOR_2_LINEAR(color) color
 #define LINEAR_2_LINEAR(color) color
 #endif
 
-struct procedural_sky_vertex
-{
-	float3 ray : NORMAL;
-	fixed4 vertexColor : COLOR0;
-	fixed4 sunColor : COLOR1;
-};
+static const float4 float4Zero = float4(0.0, 0.0, 0.0, 0.0);
+static const float4 float4One = float4(1.0, 1.0, 1.0, 1.0);
+static const float3 ditherMagic = fixed3(12.9898, 78.233, 43758.5453);
 
 struct vertex_only_input_data
 {
@@ -52,21 +60,121 @@ struct volumetric_data
 {
 	float4 vertex : SV_POSITION;
 	float3 normal : NORMAL;
-	float4 viewPos : TEXCOORD0;
-	float4 projPos : TEXCOORD1;
-	float4 worldPos : TEXCOORD2;
+	float4 projPos : TEXCOORD0;
+	float3 rayDir : TEXCOORD1;
+	float3 viewPos : TEXCOORD2;
+	float3 worldPos : TEXCOORD3;
 };
 
-fixed4 _TintColor;
-fixed3 _EmissiveColor;
-fixed _Intensity;
-float _DirectionalLightMultiplier = 1;
-float _PointSpotLightMultiplier = 1;
-float _AmbientLightMultiplier = 1;
+struct vertex_uv_normal
+{
+	float4 vertex : POSITION;
+	float2 uv : TEXCOORD0;
+	float3 normal : NORMAL;
+};
 
-sampler2D _MainTex;
-float4 _MainTex_ST;
-float4 _MainTex_TexelSize;
+struct full_screen_fragment
+{
+	float2 uv : TEXCOORD0;
+	float4 vertex : SV_POSITION;
+	float3 forwardLine : NORMAL;
+};
+
+struct deferred_fragment
+{
+	float4 gBuffer0 : SV_Target0;
+	float4 gBuffer1 : SV_Target1;
+	float4 gBuffer2 : SV_Target2;
+	float4 gBuffer3 : SV_Target3;
+};
+
+struct frag_out_with_depth
+{
+	fixed4 color : COLOR;
+	float depth : DEPTH;
+};
+
+// globals
+uniform sampler2D _MainTex;
+uniform float4 _MainTex_ST;
+uniform float4 _MainTex_TexelSize;
+uniform sampler2D _MainTex2;
+uniform float4 _MainTex2_ST;
+uniform float4 _MainTex2_TexelSize;
+uniform float4 _WeatherMakerTime;
+uniform float4 _WeatherMakerTimeSin;
+//uniform sampler2D _WeatherMakerDitherTexture;
+//uniform float4 _WeatherMakerDitherTexture_ST;
+//uniform float4 _WeatherMakerDitherTexture_TexelSize;
+uniform fixed4 _WeatherMakerAmbientLight;
+
+// all lights
+uniform int _WeatherMakerLightCount;
+uniform int _WeatherMakerNonDirLightIndex;
+uniform float4 _WeatherMakerLightPosition[MAX_LIGHT_COUNT];
+uniform fixed4 _WeatherMakerLightColor[MAX_LIGHT_COUNT];
+uniform float4 _WeatherMakerLightAtten[MAX_LIGHT_COUNT];
+uniform float4 _WeatherMakerLightSpotDirection[MAX_LIGHT_COUNT];
+uniform float4 _WeatherMakerLightSpotEnd[MAX_LIGHT_COUNT];
+
+// dir lights
+uniform int _WeatherMakerDirLightCount;
+uniform float4 _WeatherMakerDirLightPosition[MAX_LIGHT_COUNT];
+uniform fixed4 _WeatherMakerDirLightColor[MAX_LIGHT_COUNT];
+uniform float4 _WeatherMakerDirLightAtten[MAX_LIGHT_COUNT];
+
+// point lights
+uniform int _WeatherMakerPointLightCount;
+uniform float4 _WeatherMakerPointLightPosition[MAX_LIGHT_COUNT];
+uniform fixed4 _WeatherMakerPointLightColor[MAX_LIGHT_COUNT];
+uniform float4 _WeatherMakerPointLightAtten[MAX_LIGHT_COUNT];
+
+// spot lights
+uniform int _WeatherMakerSpotLightCount;
+uniform float4 _WeatherMakerSpotLightPosition[MAX_LIGHT_COUNT];
+uniform fixed4 _WeatherMakerSpotLightColor[MAX_LIGHT_COUNT];
+uniform float4 _WeatherMakerSpotLightAtten[MAX_LIGHT_COUNT];
+uniform float4 _WeatherMakerSpotLightSpotDirection[MAX_LIGHT_COUNT];
+uniform float4 _WeatherMakerSpotLightSpotEnd[MAX_LIGHT_COUNT];
+
+uniform fixed4 _WeatherMakerFogLightFalloff = fixed4(1.2, 0.0, 0.0, 0.0); // spot light radius light falloff, 0, 0, 0
+uniform fixed _WeatherMakerFogLightSunIntensityReducer = 0.8;
+uniform fixed _WeatherMakerFogDirectionalLightScatterIntensity = 5.0;
+
+uniform float3 _WeatherMakerSunDirectionUp; // direction to sun
+uniform float3 _WeatherMakerSunDirectionUp2D; // direction to sun
+uniform float3 _WeatherMakerSunDirectionDown; // direction sun is facing
+uniform float3 _WeatherMakerSunDirectionDown2D; // direction sun is facing
+uniform fixed4 _WeatherMakerSunColor; // sun light color
+uniform fixed4 _WeatherMakerSunTintColor; // sun tint color
+uniform float3 _WeatherMakerSunPositionNormalized; // sun position in world space, normalized
+uniform float3 _WeatherMakerSunPositionWorldSpace; // sun position in world space
+uniform float4 _WeatherMakerSunLightPower; // power, multiplier, shadow strength, 1.0 - shadow strength
+uniform float4 _WeatherMakerSunVar1; // scale, sun intensity ^ 0.5, sun intensity ^ 0.75, sun intensity ^ 2
+uniform float3 _WeatherMakerSunViewportPosition;
+
+uniform int _WeatherMakerMoonCount; // moon count
+uniform float3 _WeatherMakerMoonDirectionUp[MAX_MOON_COUNT]; // direction to moon
+uniform float3 _WeatherMakerMoonDirectionDown[MAX_MOON_COUNT]; // direction moon is facing
+uniform fixed4 _WeatherMakerMoonLightColor[MAX_MOON_COUNT]; // moon light color
+uniform float4 _WeatherMakerMoonLightPower[MAX_MOON_COUNT]; // power, multiplier, shadow strength, 1.0 - shadow strength
+uniform fixed4 _WeatherMakerMoonTintColor[MAX_MOON_COUNT]; // moon tint color
+uniform float4 _WeatherMakerMoonVar1[MAX_MOON_COUNT]; // scale, 0, 0, 0
+
+uniform float _WeatherMakerSkySphereRadius;
+uniform float _WeatherMakerSkySphereRadiusSquared;
+
+// locals
+
+// contains un-normalized direction to frustom corners for left and right eye : bottom left, top left, bottom right, top right
+uniform float3 _WeatherMakerCameraFrustumRays[8];
+
+uniform fixed4 _TintColor;
+uniform fixed3 _EmissiveColor;
+uniform fixed _Intensity;
+uniform float _DirectionalLightMultiplier = 1.0;
+uniform float _PointSpotLightMultiplier = 1.0;
+uniform float _AmbientLightMultiplier = 1.0;
 
 #if defined(SOFTPARTICLES_ON)
 
@@ -74,7 +182,18 @@ float _InvFade;
 
 #endif
 
-inline fixed LerpFade(float4 c, float t)
+float4 _CameraDepthTexture_ST;
+float4 _CameraDepthTexture_TexelSize;
+
+#define WM_SAMPLE_DEPTH(uv) UNITY_SAMPLE_DEPTH(SAMPLE_DEPTH_TEXTURE(_CameraDepthTexture, uv.xy))
+#define WM_SAMPLE_DEPTH_PROJ(uv) UNITY_SAMPLE_DEPTH(SAMPLE_DEPTH_TEXTURE_PROJ(_CameraDepthTexture, UNITY_PROJ_COORD(uv)))
+
+inline float GetDepth01(float2 uv)
+{
+	return Linear01Depth(WM_SAMPLE_DEPTH(uv));
+}
+
+inline fixed LerpFade(float4 lifeTime, float timeSinceLevelLoad)
 {
 	// the vertex will fade in, stay at full color, then fade out
 	// x = creation time seconds
@@ -84,73 +203,146 @@ inline fixed LerpFade(float4 c, float t)
 	// debug
 	// return 1;
 
-	float peakFadeIn = c.x + c.y;
-	float startFadeOut = c.x + c.z - c.y;
-	float endTime = c.x + c.z;
-	float lerpMultiplier = saturate(ceil(t - peakFadeIn) + 0.000001);
-	float lerp1Scalar = saturate(((t - c.x) / max(0.000001, (peakFadeIn - c.x))));
-	float lerp2Scalar = saturate(max(0, ((t - startFadeOut) / max(0.000001, (endTime - startFadeOut)))));
+	float peakFadeIn = lifeTime.x + lifeTime.y;
+	float startFadeOut = lifeTime.x + lifeTime.z - lifeTime.y;
+	float endTime = lifeTime.x + lifeTime.z;
+	float lerpMultiplier = saturate(ceil(timeSinceLevelLoad - peakFadeIn));
+	float lerp1Scalar = saturate(((timeSinceLevelLoad - lifeTime.x + 0.000001) / max(0.000001, (peakFadeIn - lifeTime.x))));
+	float lerp2Scalar = saturate(max(0, ((timeSinceLevelLoad - startFadeOut) / max(0.000001, (endTime - startFadeOut)))));
 	float lerp1 = lerp1Scalar * (1.0 - lerpMultiplier);
 	float lerp2 = (1.0 - lerp2Scalar) * lerpMultiplier;
 	return lerp1 + lerp2;
 }
 
-fixed3 ApplyLight(float4 lightPos, float4 lightDir, fixed3 lightColor, half4 lightAtten, float3 viewPos, float3 viewNormal)
+inline float3 WorldSpaceVertexPosNear(float3 vertex)
 {
-	float3 toLight = (lightPos.xyz - (viewPos * lightPos.w));
-	float lengthSq = dot(toLight, toLight);
-	float atten = (1.0 / (1.0 + (lengthSq * lightAtten.z)));
-	toLight = normalize(toLight);
+	return mul(unity_ObjectToWorld, float4(vertex.xyz, 0.0)).xyz;
+}
+
+inline float3 WorldSpaceVertexPosFar(float3 vertex)
+{
+	return mul(unity_ObjectToWorld, float4(vertex.xyz, 1.0)).xyz;
+}
+
+inline float3 WorldSpaceVertexPos(float4 vertex)
+{
+	return mul(unity_ObjectToWorld, vertex).xyz;
+}
+
+inline deferred_fragment ColorToDeferredFragment(float4 color)
+{
+	deferred_fragment f;
+	f.gBuffer0 = float4(0.0, 0.0, 0.0, 0.0);
+	f.gBuffer1 = float4(0.0, 0.0, 0.0, 0.0);
+	f.gBuffer2 = float4(0.0, 0.0, 0.0, 1.0);
+
+#if defined(UNITY_HDR_ON)
+
+	f.gBuffer3 = color;
+
+#else
+
+	// TODO: Something is wrong with alpha channel in deferred non-HDR
+	f.gBuffer3 = float4(exp2(-color.rgb), color.a);
+
+#endif
+
+	return f;
+}
+
+fixed4 ApplyDirLightWorldSpace(float4 lightDir, fixed4 lightColor)
+{
+
+#if defined(ORTHOGRAPHIC_MODE)
+
+	float atten = pow(max(0.0, dot(lightDir, float3(0.0, 0.0, -1.0))), 0.5);
+
+#else
+
+	float atten = max(0.0, dot(lightDir, float3(0.0, 1.0, 0.0)));
+
+#endif
+
+	lightColor.rgb *= lightColor.a * atten * _DirectionalLightMultiplier;
+	return lightColor;
+}
+
+fixed4 ApplyPointLightWorldSpace(float4 lightPos, fixed4 lightColor, half4 lightAtten, float3 worldPos)
+{
+	float3 toLight = (lightPos.xyz - worldPos);
 
 #if defined(ORTHOGRAPHIC_MODE)
 
 	// ignore view normal and point straight out along z axis
-	float3 normal = fixed3(0, 0, 1);
-	float diff = max(lightPos.w, dot(normal, toLight));
-	return lightColor.rgb * (diff * atten);
-
-#else
-
-	// calculate modifier for non-directional light
-	float modifierNonDirectionalLight = lightPos.w;
-
-	// will be 1 if normal was 0, 0, 0, otherwise 0
-	float normalZeroMultiplier = 1.0 - saturate(ceil(abs(viewNormal.x) + abs(viewNormal.y) + abs(viewNormal.z)));
-
-	// if normal is 0,0,0 point the normal at the non-directional light
-	viewNormal += (modifierNonDirectionalLight * normalZeroMultiplier * toLight);
-
-	// spot light calculation - will be 1 for non-spot lights
-	float rho = max(0, dot(toLight, lightDir.xyz));
-	float spotAtt = max(0, (rho - lightAtten.x) * lightAtten.y);
-
-	// calculate modifier for directional light, will be 0 for non-directional light
-	float modifierDirectionalLight = 1.0 - modifierNonDirectionalLight;
-
-	// if normal is 0,0,0 point the normal straight up for the directional light
-	viewNormal += (modifierDirectionalLight * normalZeroMultiplier * float3(0, 1, 0));
-
-	// apply spot modifier last
-	modifierNonDirectionalLight *= spotAtt;
-
-	// reduce based on normal
-	atten *= max(0, dot(viewNormal, toLight));
-
-	return lightColor.rgb * ((atten * modifierNonDirectionalLight) + modifierDirectionalLight);
+	float3 normal = fixed3(0, 0, -1);
+	float diff = dot(normal, normalize(toLight));
+	return lightColor * diff * _PointSpotLightMultiplier;
 
 #endif
 
+	float lengthSq = max(0.00001, dot(toLight, toLight));
+	float atten = (1.0 / (1.0 + (lengthSq * lightAtten.z))) * _PointSpotLightMultiplier;
+	atten *= (lengthSq * lightAtten.w < 1.0);
+	//float atten = _PointSpotLightMultiplier * max(0.0, (1.0 - (lengthSq * lightAtten.w)));
+	lightColor.rgb *= lightColor.a * atten;
+	return lightColor;
 }
 
-inline fixed4 CalculateVertexColor(float3 viewPos, float3 viewNormal)
+fixed4 ApplySpotLightWorldSpace(float4 lightPos, float4 lightDir, fixed4 lightColor, half4 lightAtten, float3 worldPos)
 {
-	fixed3 vertexColor = UNITY_LIGHTMODEL_AMBIENT.rgb * _AmbientLightMultiplier;
-	vertexColor += ApplyLight(unity_LightPosition[0], unity_SpotDirection[0], unity_LightColor[0], unity_LightAtten[0], viewPos, viewNormal);
-	vertexColor += ApplyLight(unity_LightPosition[1], unity_SpotDirection[1], unity_LightColor[1], unity_LightAtten[1], viewPos, viewNormal);
-	vertexColor += ApplyLight(unity_LightPosition[2], unity_SpotDirection[2], unity_LightColor[2], unity_LightAtten[2], viewPos, viewNormal);
-	vertexColor += ApplyLight(unity_LightPosition[3], unity_SpotDirection[3], unity_LightColor[3], unity_LightAtten[3], viewPos, viewNormal);
+	float3 toLight = (worldPos - lightPos.xyz);
+
+#if defined(ORTHOGRAPHIC_MODE)
+
+	// ignore view normal and point straight out along z axis
+	float3 normal = fixed3(0, 0, -1);
+	float diff = dot(normal, normalize(toLight));
+	return lightColor * diff * _PointSpotLightMultiplier;
+
+#endif
+
+	float lengthSq = max(0.00001, dot(toLight, toLight));
+	float atten = (1.0 / (1.0 + (lengthSq * lightAtten.z))) * _PointSpotLightMultiplier;
+	atten *= (lengthSq * lightAtten.w < 1.0);
+	//float atten = _PointSpotLightMultiplier * max(0.0, (1.0 - (lengthSq * lightAtten.w)));
+
+	// spot light calculation - will be 1 for non-spot lights
+	float rho = max(0, dot(normalize(toLight), lightDir.xyz));
+	atten *= saturate((rho - lightAtten.x) * lightAtten.y);
+	lightColor.rgb *= lightColor.a * atten;
+	return lightColor;
+}
+
+inline fixed3 CalculateVertexColorWorldSpace(float3 worldPos, float doDirLight)
+{
+	fixed3 vertexColor = fixed3(0.0, 0.0, 0.0);
+	if (doDirLight)
+	{
+		for (int dirIndex = 0; dirIndex < _WeatherMakerDirLightCount; dirIndex++)
+		{
+			vertexColor += ApplyDirLightWorldSpace(_WeatherMakerDirLightPosition[dirIndex], _WeatherMakerDirLightColor[dirIndex]);
+		}
+	}
+	for (int pointIndex = 0; pointIndex < _WeatherMakerPointLightCount; pointIndex++)
+	{
+		vertexColor += ApplyPointLightWorldSpace(_WeatherMakerPointLightPosition[pointIndex], _WeatherMakerPointLightColor[pointIndex], _WeatherMakerPointLightAtten[pointIndex], worldPos);
+	}
+	for (int spotIndex = 0; spotIndex < _WeatherMakerSpotLightCount; spotIndex++)
+	{
+		vertexColor += ApplySpotLightWorldSpace(_WeatherMakerSpotLightPosition[spotIndex], _WeatherMakerSpotLightSpotDirection[spotIndex], _WeatherMakerSpotLightColor[spotIndex], _WeatherMakerSpotLightAtten[spotIndex], worldPos);
+	}
+
+#if defined(UNITY_HDR_ON)
+
+	vertexColor = clamp(vertexColor, 0, 1.15);
+
+#else
+
 	vertexColor = clamp(vertexColor, 0, 3);
-	return fixed4(vertexColor, 1);
+
+#endif
+
+	return vertexColor;
 }
 
 inline float3 RotateVertexLocalQuaternion(float3 position, float3 axis, float angle)
@@ -162,246 +354,37 @@ inline float3 RotateVertexLocalQuaternion(float3 position, float3 axis, float an
 	return position + (2.0 * cross(cross(position, q.xyz) + (q.w * position), q.xyz));
 }
 
-inline fixed GetMieScattering(float cosAngle)
-{
-	const float MIEGV_COEFF = 0.1;
-	const float4 MIEGV = float4(1 - (MIEGV_COEFF * MIEGV_COEFF), 1 + (MIEGV_COEFF * MIEGV_COEFF), 2 * MIEGV_COEFF, 1.0f / (4.0f * 3.14159265358979323846));
-	return MIEGV.w * (MIEGV.x / (pow(MIEGV.y - MIEGV.z * cosAngle, 1.5)));
-}
-
-inline fixed GetMiePhase(fixed size, fixed eyeCos, fixed eyeCos2)
-{
-	fixed temp = 1.0 + MIE_G2 - 2 * MIE_G * eyeCos;
-	temp = max(1.0e-4, smoothstep(0.0, 0.005, temp) * temp);
-	return size * ((1.0 - MIE_G2) / (2.0 + MIE_G2)) * (1.0 + eyeCos2) / temp;
-}
-
-inline fixed GetRayleighPhase(fixed eyeCos2)
-{
-	return 0.75 + 0.75 * eyeCos2;
-}
-
-inline fixed GetRayleighPhase(fixed3 light, fixed3 ray)
-{
-	fixed eyeCos = dot(light, ray);
-	return GetRayleighPhase(eyeCos * eyeCos);
-}
-
-inline fixed CalcSunSpot(fixed size, fixed3 vec1, fixed3 vec2)
-{
-	fixed3 delta = vec1 - vec2;
-	fixed dist = length(delta);
-	fixed spot = 1.0 - smoothstep(0.0, size * 3, dist);
-	return 100 * spot * spot;
-}
-
-inline fixed4 GetSunColorHighQuality(float3 sunNormal, fixed4 sunColor, fixed size, float3 ray)
-{
-	ray = normalize(ray);
-	fixed eyeCos = dot(sunNormal, ray);
-	fixed eyeCos2 = eyeCos * eyeCos;
-	fixed mie = GetMiePhase(size, eyeCos, eyeCos2);
-	return (mie * sunColor);
-}
-
-inline fixed4 GetSunColorFast(float3 sunNormal, fixed4 sunColor, fixed size, float3 ray)
-{
-	ray = normalize(ray);
-	fixed eyeCos = dot(sunNormal, ray);
-	fixed eyeCos2 = eyeCos * eyeCos;
-	fixed mie = CalcSunSpot(size, sunNormal, -ray);
-	return (mie * sunColor);
-}
-
-inline float GetSkyScale(float inCos)
-{
-	float x = 1.0 - inCos;
-#if defined(SHADER_API_N3DS)
-	// The polynomial expansion here generates too many swizzle instructions for the 3DS vertex assembler
-	// Approximate by removing x^1 and x^2
-	return 0.25 * exp(-0.00287 + x * x * x * (-6.80 + x * 5.25));
-#else
-	return 0.25 * exp(-0.00287 + x * (0.459 + x * (3.83 + x * (-6.80 + x * 5.25))));
-#endif
-
-}
-
-fixed GetSunLightSkyMultiplier(float3 lightPos, float3 skyVertex)
-{
-	fixed3 toLight = (lightPos - skyVertex);
-	fixed lengthSq = dot(toLight, toLight);
-	fixed atten = 1.0 / (1.0 + (lengthSq * 1));
-	return clamp(atten * 1.5, 1.0, 1.4);
-}
-
-procedural_sky_vertex CalculateSkyVertex(float3 lightPos, fixed3 lightColor, fixed3 groundColor, float3 skyVertex, fixed3 skyTintColor, float atmosphereThickness)
-{
-	procedural_sky_vertex o;
-
-	static const float3 kDefaultScatteringWavelength = float3(.65, .57, .475);
-	static const float3 kVariableRangeForScatteringWavelength = float3(.15, .15, .15);
-	static const float OUTER_RADIUS = 1.065;
-	static const float kOuterRadius = OUTER_RADIUS;
-	static const float kOuterRadius2 = OUTER_RADIUS * OUTER_RADIUS;
-	static const float kInnerRadius = 1.0;
-	static const float kInnerRadius2 = 1.0;
-	static const float kCameraHeight = 0.0001;
-	static const float kMIE = 0.0010; // Mie constant
-	static const float kSUN_BRIGHTNESS = 20.0; // Sun brightness
-	static const float kMAX_SCATTER = 50.0; // Maximum scattering value, to prevent math overflows on Adrenos
-	static const half kSunScale = 400.0 * kSUN_BRIGHTNESS;
-	static const float kKmESun = kMIE * kSUN_BRIGHTNESS;
-	static const float kKm4PI = kMIE * 4.0 * 3.14159265;
-	static const float kScale = 1.0 / (OUTER_RADIUS - 1.0);
-	static const float kScaleDepth = 0.25;
-	static const float kScaleOverScaleDepth = (1.0 / (OUTER_RADIUS - 1.0)) / 0.25;
-	static const float kSamples = 2.0; // THIS IS UNROLLED MANUALLY, DON'T TOUCH
-	float kRAYLEIGH = (lerp(0, 0.0025, pow(atmosphereThickness, 2.5))); // Rayleigh constant
-	float3 kSkyTintInGammaSpace = COLOR_2_GAMMA(skyTintColor); // convert tint from Linear back to Gamma
-	float3 kScatteringWavelength = lerp(
-		kDefaultScatteringWavelength - kVariableRangeForScatteringWavelength,
-		kDefaultScatteringWavelength + kVariableRangeForScatteringWavelength,
-		float3(1, 1, 1) - kSkyTintInGammaSpace); // using Tint in sRGB gamma allows for more visually linear interpolation and to keep (.5) at (128, gray in sRGB) point
-	float3 kInvWavelength = 1.0 / pow(kScatteringWavelength, 4);
-	float kKrESun = kRAYLEIGH * kSUN_BRIGHTNESS;
-	float kKr4PI = kRAYLEIGH * 4.0 * 3.14159265;
-	float3 cameraPos = float3(0, kInnerRadius + kCameraHeight, 0);
-	// The camera's current position
-	// Get the ray from the camera to the vertex and its length (which is the far point of the ray passing through the atmosphere)
-	float3 eyeRay = normalize(mul((float3x3)unity_ObjectToWorld, skyVertex));
-	o.ray = -eyeRay;
-	float far = 0.0;
-	fixed3 cIn, cOut;
-	if (eyeRay.y >= 0.0)
-	{
-		// Sky
-		// Calculate the length of the "atmosphere"
-		far = sqrt(kOuterRadius2 + kInnerRadius2 * eyeRay.y * eyeRay.y - kInnerRadius2) - kInnerRadius * eyeRay.y;
-		float3 pos = cameraPos + far * eyeRay;
-
-		// Calculate the ray's starting position, then calculate its scattering offset
-		float height = kInnerRadius + kCameraHeight;
-		float depth = exp(kScaleOverScaleDepth * (-kCameraHeight));
-		float startAngle = dot(eyeRay, cameraPos) / height;
-		float startOffset = depth * GetSkyScale(startAngle);
-
-		// Initialize the scattering loop variables
-		float sampleLength = far / kSamples;
-		float scaledLength = sampleLength * kScale;
-		float3 sampleRay = eyeRay * sampleLength;
-		float3 samplePoint = cameraPos + sampleRay * 0.5;
-
-		// Now loop through the sample rays
-		float3 frontColor = float3(0.0, 0.0, 0.0);
-		{
-			float height = length(samplePoint);
-			float depth = exp(kScaleOverScaleDepth * (kInnerRadius - height));
-			float lightAngle = dot(lightPos, samplePoint) / height;
-			float cameraAngle = dot(eyeRay, samplePoint) / height;
-			float scatter = (startOffset + depth * (GetSkyScale(lightAngle) - GetSkyScale(cameraAngle)));
-			float3 attenuate = exp(-clamp(scatter, 0.0, kMAX_SCATTER) * (kInvWavelength * kKr4PI + kKm4PI));
-			frontColor += attenuate * (depth * scaledLength);
-			samplePoint += sampleRay;
-		}
-		{
-			float height = length(samplePoint);
-			float depth = exp(kScaleOverScaleDepth * (kInnerRadius - height));
-			float lightAngle = dot(lightPos, samplePoint) / height;
-			float cameraAngle = dot(eyeRay, samplePoint) / height;
-			float scatter = (startOffset + depth * (GetSkyScale(lightAngle) - GetSkyScale(cameraAngle)));
-			float3 attenuate = exp(-clamp(scatter, 0.0, kMAX_SCATTER) * (kInvWavelength * kKr4PI + kKm4PI));
-			frontColor += attenuate * (depth * scaledLength);
-			samplePoint += sampleRay;
-		}
-
-		// Finally, scale the Mie and Rayleigh colors and set up the varying variables for the pixel shader
-		cIn = frontColor * (kInvWavelength * kKrESun);
-		cOut = frontColor * kKmESun;
-	}
-	else
-	{
-		// Ground
-		far = (-kCameraHeight) / (min(-0.001, eyeRay.y));
-		float3 pos = cameraPos + far * eyeRay;
-
-		// Calculate the ray's starting position, then calculate its scattering offset
-		float depth = exp((-kCameraHeight) * (1.0 / kScaleDepth));
-		float cameraAngle = dot(o.ray, pos);
-		float lightAngle = dot(lightPos, pos);
-		float cameraScale = GetSkyScale(cameraAngle);
-		float lightScale = GetSkyScale(lightAngle);
-		float cameraOffset = depth * cameraScale;
-		float temp = (lightScale + cameraScale);
-
-		// Initialize the scattering loop variables
-		float sampleLength = far / kSamples;
-		float scaledLength = sampleLength * kScale;
-		float3 sampleRay = eyeRay * sampleLength;
-		float3 samplePoint = cameraPos + sampleRay * 0.5;
-
-		// Now loop through the sample rays
-		float3 frontColor = float3(0.0, 0.0, 0.0);
-		float3 attenuate;
-		{
-			float height = length(samplePoint);
-			float depth = exp(kScaleOverScaleDepth * (kInnerRadius - height));
-			float scatter = depth * temp - cameraOffset;
-			attenuate = exp(-clamp(scatter, 0.0, kMAX_SCATTER) * (kInvWavelength * kKr4PI + kKm4PI));
-			frontColor += attenuate * (depth * scaledLength);
-			samplePoint += sampleRay;
-		}
-		cIn = frontColor * (kInvWavelength * kKrESun + kKmESun);
-		cOut = clamp(attenuate, 0.0, 1.0);
-	}
-
-	fixed rayLeigh = GetRayleighPhase(lightPos, o.ray);
-	fixed atten = GetSunLightSkyMultiplier(lightPos, skyVertex);
-	o.vertexColor = fixed4((cIn * rayLeigh) + (cIn + (groundColor)* cOut), 1);
-	o.sunColor = fixed4((1.0 - cOut) * lightColor, atten);
-
-#if defined(UNITY_COLORSPACE_GAMMA) && SKYBOX_COLOR_IN_TARGET_COLOR_SPACE
-	o.vertexColor = sqrt(o.vertexColor);
-	o.sunColor = sqrt(o.sunColor);
-#endif
-
-	return o;
-}
-
 inline volumetric_data GetVolumetricData(float4 vertex, float3 normal)
 {
 	volumetric_data o;
-	o.worldPos = mul(unity_ObjectToWorld, vertex);
 	o.vertex = UnityObjectToClipPos(vertex);
-	o.projPos = ComputeScreenPos(o.vertex);
-	o.viewPos = mul(UNITY_MATRIX_MV, vertex);
-	o.worldPos.w = normalize(o.viewPos).z;
 	o.normal = UnityObjectToWorldNormal(normal);
+	o.projPos = ComputeScreenPos(o.vertex);
+	o.worldPos = WorldSpaceVertexPos(vertex);
+	o.rayDir = (o.worldPos - _WorldSpaceCameraPos);
+	o.viewPos = UnityObjectToViewPos(vertex);
 	return o;
 }
 
-float3 GetFarPlaneVector(float4x4 inverseMVP, float4 clip)
+float3 GetFarPlaneVectorFullScreen(float2 uv)
 {
-	// create x,y clip coordinates (render space), divide by w to get near plane
-	float2 clipFront = clip.xy / clip.w;
 
-	// create clip coordinates (render space) at the back of the viewing frustum
-	// 1.0, 1.0 puts it at the back
-	float4 clipBack = float4(clipFront, 1.0, 1.0);
+#if defined(UNITY_SINGLE_PASS_STEREO) || defined(UNITY_MULTI_PASS_STEREO)
+	
+	int index = unity_StereoEyeIndex * 4;
 
-	// handle flipped projection matrixes (https://docs.unity3d.com/Manual/SL-UnityShaderVariables.html)
-	clipBack.y *= _ProjectionParams.x;
+#else
+	
+	int index = 0;
 
-	// convert from clip space to world space
-	float4 farPlanePosition = mul(inverseMVP, clipBack);
+#endif
 
-	// get actual world position by dividing by w
-	farPlanePosition.xyz /= farPlanePosition.w;
-
-	// return the vector that points from the camera to the back of the frustum
-	return farPlanePosition.xyz - _WorldSpaceCameraPos;
+	uv.x = (uv.x > 0.5);
+	uv.y = (uv.y > 0.5);
+	return _WeatherMakerCameraFrustumRays[(unity_StereoEyeIndex * 4) + ((uv.x * 2) + uv.y)];
 }
 
-inline void RayBoxIntersect(float3 rayOrigin, float3 rayDir, float rayLength, float3 boxMin, float3 boxMax, out float intersectAmount, out float distanceToBox)
+inline float RayBoxIntersect(float3 rayOrigin, float3 rayDir, float rayLength, float3 boxMin, float3 boxMax, out float intersectAmount, out float distanceToBox)
 {
 	// https://tavianator.com/fast-branchless-raybounding-box-intersections/
 
@@ -426,16 +409,191 @@ inline void RayBoxIntersect(float3 rayOrigin, float3 rayDir, float rayLength, fl
 	float tmin = max(max(tmin1.x, tmin1.y), tmin1.z);
 	float tmax = min(min(tmax1.x, tmax1.y), tmax1.z);
 	float2 tt0 = max(tmin1.xx, tmin1.yz);
-	distanceToBox = max(0, max(tt0.x, tt0.y));
+	distanceToBox = max(0.0, max(tt0.x, tt0.y));
 	tt0 = min(tmax1.xx, tmax1.yz);
 	float tt1 = min(tt0.x, tt0.y);
 	tt1 = min(tt1, rayLength);
-	intersectAmount = max(0, tt1 - distanceToBox);
+	intersectAmount = max(0.0, tt1 - distanceToBox);
+
+	return intersectAmount > 0.0001;
+}
+
+// spherePosition is x,y,z,radius squared
+inline float RaySphereIntersect(float3 rayOrigin, float3 rayDir, float rayLength, float4 spherePosition, out float intersectAmount, out float distanceToSphere)
+{
+	// optimized version, seems to work as well, but watch out for artifacts
+	// https://gamedev.stackexchange.com/questions/96459/fast-ray-sphere-collision-code
+	float3 sphereCenter = rayOrigin - spherePosition.xyz;
+	float b = dot(rayDir, sphereCenter);
+	float c = dot(sphereCenter, sphereCenter) - spherePosition.w;
+	float discr = (b * b) - c;
+	float t = sqrt(discr * (discr > 0.0));
+	b = -b;
+	distanceToSphere = clamp(b - t, 0.0, rayLength);
+	intersectAmount = clamp(b + t, 0.0, rayLength);
+	intersectAmount = intersectAmount - distanceToSphere;
+
+	/* // older version which is known to work in all cases
+	// http://www.cosinekitty.com/raytrace/chapter06_sphere.html
+	float3 sphereCenter = rayOrigin - spherePosition.xyz;
+	float fA = dot(rayDir, rayDir);
+	float fB = 2.0 * dot(rayDir, sphereCenter);
+	float fC = dot(sphereCenter, sphereCenter) - spherePosition.w;
+	float fD = (fB * fB) - (4.0 * fA * fC);
+	float recpTwoA = (fD > 0.0) * (0.5 / fA);
+	float DSqrt = sqrt(fD);
+	fB = -fB;
+
+	// the distance to the front of sphere - will be 0 if in sphere or miss
+	distanceToSphere = clamp((fB - DSqrt) * recpTwoA, 0.0, rayLength);
+
+	// total distance to the back of the sphere, will be 0 if miss
+	intersectAmount = clamp((fB + DSqrt) * recpTwoA, 0.0, rayLength);
+
+	// get intersect amount - we know that distance to back of sphere is greater than distance to front of sphere at this point
+	intersectAmount = intersectAmount - distanceToSphere;
+	*/
+
+	return intersectAmount > 0.0001;
+}
+
+// return 0 if no intersect
+inline float RayPlaneIntersect(float3 rayOrigin, float3 rayDir, float3 planeNormal, float3 planePos, out float distanceToPlane)
+{
+	float denom = dot(planeNormal, rayDir);
+	distanceToPlane = dot(planePos - rayOrigin, planeNormal) / denom;
+	return (denom > 0.0001 && distanceToPlane > 0.0001);
+}
+
+// distanceToPlane becomes distance to disc center
+// intersectsDisc is true if the plane intersect is within the disc
+inline void RayPlaneDiscIntersect(float3 rayOrigin, float3 rayDir, float3 planeCenter, float discRadiusSquared, inout float distanceToPlane, out float intersectsDisc)
+{
+	float3 planeIntersect = (rayOrigin + (rayDir * distanceToPlane));
+	float3 planeIntersectLocal = planeIntersect - planeCenter;
+	float distanceFromDiscCenter = dot(planeIntersectLocal, planeIntersectLocal);
+	distanceToPlane = distance(planeIntersect, rayOrigin);
+	intersectsDisc = (distanceFromDiscCenter < discRadiusSquared);
+}
+
+inline float LineLineClosestDistanceSquared(float3 line1Point1, float3 line1Point2, float3 line2Point1, float3 line2Point2, out float3 closePoint1, out float3 closePoint2)
+{
+	float3 u = line1Point2 - line1Point1;
+	float3 v = line2Point2 - line2Point1;
+	float3 w = line1Point1 - line2Point1;
+	float a = dot(u, u);         // always >= 0
+	float b = dot(u, v);
+	float c = dot(v, v);         // always >= 0
+	float d = dot(u, w);
+	float e = dot(v, w);
+	float D = a * c - b * b;        // always >= 0
+	float sc, tc;
+
+	// compute the line parameters of the two closest points
+	if (D < 0.0001)
+	{
+		// the lines are almost parallel
+		sc = 0.0;
+		tc = (b > c ? d / b : e / c);    // use the largest denominator
+	}
+	else
+	{
+		sc = (b * e - c * d) / D;
+		tc = (a * e - b * d) / D;
+	}
+
+	// get the difference of the two closest points
+	closePoint1 = w + (sc * u);
+	closePoint2 = (tc * v);
+	float3 dP = closePoint1 - closePoint2; // =  L1(sc) - L2(tc)
+
+	// return norm(dP);   // return the closest distance
+	return dot(dP, dP);
+}
+
+// coneposition is xyz, range
+// conedir is xyz, end radius squared
+// coneatten is cos(angle * 0.5), 1.0 / cos(angle * 0.25), atten, 1.0 / range squared
+// coneend is base center xyz, slant squared
+inline float RayConeIntersect(float3 rayOrigin, float3 rayDir, float rayLength, float4 conePosition, float4 coneDir, float4 coneEnd, float4 coneAtten, out float intersectAmount, out float distanceToCone)
+{
+	float2 t;
+
+	// https://www.geometrictools.com/GTEngine/Include/Mathematics/GteIntrLine3Cone3.h
+	// https://www.shadertoy.com/view/4s23DR
+	// https://github.com/mayank127/raytracer/blob/master/object.cpp
+	float3 PmV = rayOrigin - conePosition.xyz;
+	float DdU = dot(coneDir.xyz, rayDir);
+	float DdPmV = dot(coneDir.xyz, PmV);
+	float UdPmV = dot(rayDir, PmV);
+	float PmVdPmV = dot(PmV, PmV);
+	float halfCosAngle = coneAtten.x * coneAtten.x;
+	float c2 = DdU * DdU - halfCosAngle;
+	float c1 = DdU * DdPmV - halfCosAngle * UdPmV;
+	float c0 = DdPmV * DdPmV - halfCosAngle * PmVdPmV;
+	float discr = c1 * c1 - c0 * c2;
+	discr *= (discr > 0.0);
+	float root = sqrt(discr);
+	float invC2 = (1.0 / c2);
+	c1 = -c1;
+	t.y = (c1 - root) * invC2;
+	t.x = (c1 + root) * invC2;
+
+	// zero out negative cone
+	t *= (DdPmV + (DdU * t) > 0.0);
+
+    if (t.x == 0.0 && t.y == 0.0)
+    {
+        intersectAmount = 0.0;
+        distanceToCone = 0.0;
+        return false;
+    }
+    else
+    {
+    	// intersect cone base (disc) and subsitute where appropriate
+    	float distanceToPlane1, distanceToPlane2;
+		float hasCap1, hasCap2;
+
+    	// case 1: ray passes down through cone disc plane
+    	// handle case where the ray passes down through the cone disc plane
+		float intersectPlane1 = RayPlaneIntersect(rayOrigin, rayDir, coneDir.xyz, coneEnd.xyz, distanceToPlane1);
+    	RayPlaneDiscIntersect(rayOrigin, rayDir, coneEnd.xyz, coneDir.w, distanceToPlane1, hasCap1);
+
+    	// if hasCap, y becomes cap intersect, else y is min of distance to plane or y
+    	t.y = (intersectPlane1 * ((distanceToPlane1 * hasCap1) + (min(distanceToPlane1, t.y) * !hasCap1))) + (t.y * !intersectPlane1);
+    	// ---
+
+    	// case 2: ray passes up through cone disc plane
+    	// handle case where the ray passes up through the cone disc plane
+    	float intersectPlane2 = RayPlaneIntersect(rayOrigin, rayDir, -coneDir.xyz, coneEnd.xyz, distanceToPlane2);
+    	RayPlaneDiscIntersect(rayOrigin, rayDir, coneEnd.xyz, coneDir.w, distanceToPlane2, hasCap2);
+
+    	// if hasCap, x becomes cap intersect, else x is un-modified
+    	t.x = (intersectPlane2 * ((distanceToPlane2 * hasCap2) + (t.x * !hasCap2))) + (t.x * !intersectPlane2);
+
+    	// if the plane intersect is closer than the distance to the back cone intersect, y is unmodified, else y is 0
+    	t.y *= (!intersectPlane2 || distanceToPlane2 < t.y);
+    	// ---
+
+    	// case 3: ray does not pass through cone disc plane
+    	// handle case where ray does not intersect the cone disc plane
+    	// point must be within slant distance, else throw it out (squared distance for performance)
+    	float3 distanceVector = rayOrigin + (rayDir * t.y) - conePosition.xyz;
+    	t.y *= (intersectPlane1 || intersectPlane2 || dot(distanceVector, distanceVector) < coneEnd.w);
+
+    	// clamp results to ray length, remove negative values
+    	distanceToCone = clamp(t.x, 0.0, rayLength);
+    	intersectAmount = clamp(t.y, 0.0, rayLength);
+    	intersectAmount = max(0.0, intersectAmount - distanceToCone);
+
+    	return intersectAmount > 0.0001;
+    }
 }
 
 inline float RandomFloat(float3 v)
 {
-	return frac(sin(dot(v.xyz, float3(12.9898, 78.233, 45.5432))) * 43758.5453);
+	return (frac(frac(dot(v.xyz, float3(12.9898, 78.233, 45.5432))) * 43758.5453) - 0.5) * 2.0;
+	//return frac(sin(dot(v.xyz, float3(12.9898, 78.233, 45.5432))) * 43758.5453);
 }
 
 inline void GetFullScreenBoundingBox(float height, out float3 boxMin, out float3 boxMax)
@@ -444,106 +602,89 @@ inline void GetFullScreenBoundingBox(float height, out float3 boxMin, out float3
 	boxMax = float3(_WorldSpaceCameraPos.x + _ProjectionParams.z, height, _WorldSpaceCameraPos.z + _ProjectionParams.z);
 }
 
-inline float CalculateNoiseSphere(sampler2D noiseTex, float3 normal, float3 worldPos, float scale, float3 velocity, float multiplier)
+inline void GetFullScreenBoundingBox2(float minHeight, float maxHeight, out float3 boxMin, out float3 boxMax)
 {
-	const float divider = 32.0; // 256
-	const float oneOverDivider = 1.0 / divider;
-	const float bias = -999;
-	const float aOffX = 23.0;
-	const float aOffY = 29.0;
-	const float b_off_adder = 1.0;
-
-	float t = _Time.x;
-	worldPos *= scale;
-	worldPos += (t * velocity);
-	worldPos.z = frac(worldPos.z) * divider;
-	float iz = floor(worldPos.z);
-	float fz = frac(worldPos.z);
-	float2 a_off = float2(aOffX, aOffY) * (iz)* oneOverDivider;
-	float2 b_off = float2(aOffX, aOffY) * (iz + b_off_adder) * oneOverDivider;
-	float a = tex2Dlod(noiseTex, float4(worldPos.xy + a_off, 0, bias)).r;
-	float b = tex2Dlod(noiseTex, float4(worldPos.xy + b_off, 0, bias)).r;
-	return (lerp(a, b, fz) - 0.65) * multiplier;
+	boxMin = float3(_WorldSpaceCameraPos.x - _ProjectionParams.z, minHeight, _WorldSpaceCameraPos.z - _ProjectionParams.z);
+	boxMax = float3(_WorldSpaceCameraPos.x + _ProjectionParams.z, maxHeight, _WorldSpaceCameraPos.z + _ProjectionParams.z);
 }
 
-inline float CalculateNoisePerlinSphere(sampler2D noiseTex, float3 normal, float3 worldPos, float scale, float3 velocity, float multiplier)
+inline float CalculateNoiseXZ(sampler2D noiseTex, float3 worldPos, float scale, float2 offset, float2 velocity, float multiplier, float adder)
 {
-	const float powersOfTwo[6] = { pow(2.0, 0), pow(2.0, 1), pow(2.0, 2), pow(2.0, 3), pow(2.0, 4), pow(2.0, 5) };
-	const float powersOfPoint5[6] = { pow(0.5, 0), pow(0.5, 1), pow(0.5, 2), pow(0.5, 3), pow(0.5, 4), pow(0.5, 5) };
-	return
-		CalculateNoiseSphere(noiseTex, normal, worldPos * powersOfTwo[0], scale, velocity, multiplier) * powersOfPoint5[0] +
-		CalculateNoiseSphere(noiseTex, normal, worldPos * powersOfTwo[1], scale, velocity, multiplier) * powersOfPoint5[1] +
-		CalculateNoiseSphere(noiseTex, normal, worldPos * powersOfTwo[2], scale, velocity, multiplier) * powersOfPoint5[2] +
-		CalculateNoiseSphere(noiseTex, normal, worldPos * powersOfTwo[3], scale, velocity, multiplier) * powersOfPoint5[3] +
-		CalculateNoiseSphere(noiseTex, normal, worldPos * powersOfTwo[4], scale, velocity, multiplier) * powersOfPoint5[4] +
-		CalculateNoiseSphere(noiseTex, normal, worldPos * powersOfTwo[5], scale, velocity, multiplier) * powersOfPoint5[5];
-}
-
-inline float CalculateNoiseAverage(sampler2D noiseTex, float3 normal, float3 worldPos, float scale, float2 velocity, float multiplier)
-{
-	const float subtractor = 0.65;
-	const float divider = 0.333333;
-	const float normalMinMultiplier = 1.0;
-	// normal = abs(normal);
-	float t = _Time.x;
-	float noise = 0.0;
-	worldPos *= scale;
-	float2 vt = (t.xx * velocity.xy), noiseUV;
-
-	// create 3 samples of noise and average them
-	noiseUV = float2(worldPos.x, worldPos.z);
-	noiseUV += vt;
-	noise = (tex2D(noiseTex, noiseUV).r - subtractor) * multiplier;// *max(normalMinMultiplier, normal.y);
-	noiseUV = float2(worldPos.y, worldPos.x);
-	noiseUV += vt;
-	noise += (tex2D(noiseTex, noiseUV).r - subtractor) * multiplier;// *max(normalMinMultiplier, normal.z);
-	noiseUV = float2(worldPos.z, worldPos.y);
-	noiseUV += vt;
-	noise += (tex2D(noiseTex, noiseUV).r - subtractor) * multiplier;// *max(normalMinMultiplier, normal.x);
-	return noise * divider;
-}
-
-inline float CalculateNoiseXZ(sampler2D noiseTex, float3 worldPos, float scale, float2 velocity, float multiplier)
-{
-	float t = _Time.x;
+	float t = _WeatherMakerTime.x;
 	float2 noiseUV = float2(worldPos.x * scale, worldPos.z * scale);
-	noiseUV += (t.xx * velocity.xy);
-	return ((tex2D(noiseTex, noiseUV).r - 0.5) * multiplier);
+	noiseUV += offset;
+	noiseUV += (t.xx * velocity);
+	//return (tex2D(noiseTex, noiseUV).a + adder) * multiplier;
+	float4 uvlod = float4(noiseUV.x, noiseUV.y, 0, 0);
+	return (tex2Dlod(noiseTex, uvlod).a + adder) * multiplier;
 }
 
-/*
-inline float sphereDistance(float3 p)
+inline float2 AdjustFullScreenUV(float2 uv)
 {
-return distance(p, _FogSphere.xyz) - _FogSphere.w;
+
+#if UNITY_SINGLE_PASS_STEREO
+
+	uv = UnityStereoTransformScreenSpaceTex(uv);
+	// o.uv = UnityStereoScreenSpaceUVAdjust(v.texcoord, _MainTex_ST);
+
+#endif
+
+#if UNITY_UV_STARTS_AT_TOP
+
+	if (_MainTex_TexelSize.y < 0)
+	{
+		uv.y = 1.0 - uv.y;
+	}
+
+#endif
+
+	return uv;
 }
 
-// there is a bug with this right at the edge of the sphere where the outer part looks funny, almost like a second sphere
-// need to fix this bug before this function can be used
-inline float fastFogCalculation(float3 rayDir, float depth)
+inline float4 UnityObjectToClipPosFarPlane(float4 vertex)
 {
-float radiusSquared = _FogSphere.w * _FogSphere.w;
-float3 m = -_FogSphere.xyz;
-float b = dot(m, rayDir);
-float nb = -b;
-float c = dot(m, m) - radiusSquared;
-
-// Exit if r’s origin outside s (c > 0) and r pointing away from s (b > 0)
-//if (c > 0 && b > 0) return 0;
-
-float discr = b * b - c;
-
-// A negative discriminant corresponds to ray missing sphere
-//if (discr < 0.0f) return 0;
-
-// Ray now found to intersect sphere, compute smallest t value of intersection
-float t = nb - sqrt(discr);
-
-// If t is negative, ray started inside sphere so clamp t to zero
-//if (t < 0.0f) t = 0.0f;
-
-float3 hitPoint = (t * rayDir);
-float3 normal = normalize(_FogSphere.xyz - hitPoint);// (hitPoint - rayOrigin) / _FogParam.w;
-float e = (1 - (1 / exp(discr * 0.5 * length(normal))));
-return (saturate(nb) * e * saturate(depth - t));
+	float4 pos = UnityObjectToClipPos(vertex);
+	if (UNITY_NEAR_CLIP_VALUE == 1.0)
+	{
+		pos.z = 0.0;
+	}
+	else if (UNITY_NEAR_CLIP_VALUE == 0.0)
+	{
+		pos.z = 1.0;
+	}
+	else
+	{
+		pos.z = pos.w;
+	}
+	return pos;
 }
-*/
+
+// only works for wrapping coordinates
+inline float2 RotateUV(float2 uv, float s, float c)
+{
+	return float2((uv.x * c) - (uv.y * s), (uv.x * s) + (uv.y * c));
+}
+
+inline void ApplyDither(inout fixed3 rgb, float2 screenUV, fixed l)
+{
+	fixed3 gradient = frac(sin(dot(screenUV * _WeatherMakerTime.x, ditherMagic.xy)) * ditherMagic.z) * l;
+	rgb = max(0, (rgb - gradient));
+}
+
+inline fixed GetMieScattering(float cosAngle)
+{
+	const float MIEGV_COEFF = 0.1;
+	const float4 MIEGV = float4(1.0 - (MIEGV_COEFF * MIEGV_COEFF), 1.0 + (MIEGV_COEFF * MIEGV_COEFF), 2.0 * MIEGV_COEFF, 1.0f / (4.0f * 3.14159265358979323846));
+	return MIEGV.w * (MIEGV.x / (pow(MIEGV.y - (MIEGV.z * cosAngle), 1.5)));
+}
+
+full_screen_fragment full_screen_vertex_shader(vertex_uv_normal v)
+{
+	full_screen_fragment o;
+	o.vertex = UnityObjectToClipPosFarPlane(v.vertex);
+	o.uv = AdjustFullScreenUV(v.uv);
+	o.forwardLine = GetFarPlaneVectorFullScreen(v.uv);
+	return o;
+}
+
+#endif // __WEATHER_MAKER_SHADER__
